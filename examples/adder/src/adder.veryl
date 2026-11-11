@@ -1,0 +1,60 @@
+/// Request/response bus of the adder.
+interface adder_if {
+    var start : logic   ;
+    var a     : logic<8>;
+    var b     : logic<8>;
+    var done  : logic   ;
+    var result: logic<9>;
+
+    modport dut {
+        start : input ,
+        a     : input ,
+        b     : input ,
+        done  : output,
+        result: output,
+    }
+
+    modport tb {
+        start : output,
+        a     : output,
+        b     : output,
+        done  : input ,
+        result: input ,
+    }
+}
+
+/// Answers each `start` with the sum of `a` and `b` on the next cycle.
+module adder (
+    i_clk: input   clock        ,
+    bus  : modport adder_if::dut,
+) {
+    always_ff {
+        bus.done = bus.start;
+        if bus.start {
+            bus.result = bus.a + bus.b;
+        }
+    }
+}
+
+/// Runs the rustdv tests of the `rustdv_tb` component against the adder.
+#[test(adder_test)]
+module adder_test {
+    inst clk: $tb::clock_gen;
+    inst bus: adder_if;
+    inst dut: adder (
+        i_clk: clk,
+        bus       ,
+    );
+    inst tb: $comp::rustdv_tb (
+        clk        ,
+        bus: bus.tb,
+    );
+
+    // tb.start() hands control to rustdv. The rustdv regression finishes the
+    // test when it is done; clk.next bounds the run if it never does.
+    initial {
+        tb.start();
+        clk.next(1000);
+        $finish();
+    }
+}

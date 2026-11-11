@@ -1,0 +1,18 @@
+[package]
+name = "adder_tb"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Must be the same rustdv as the one rustdv-veryl depends on.
+rustdv = { git = "https://github.com/taichi-ishitani/rustdv", branch = "gpi-backend-trait", default-features = false }
+rustdv-veryl = { path = "../../.." }
+# The component derives refer to `::veryl_component`.
+veryl-component = "0.1.2"
+
+# Standalone package.
+[workspace]
