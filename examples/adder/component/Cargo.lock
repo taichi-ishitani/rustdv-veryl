@@ -108,7 +108,7 @@ dependencies = [
 [[package]]
 name = "rustdv"
 version = "0.3.0"
-source = "git+https://github.com/taichi-ishitani/rustdv?branch=gpi-backend-trait#f19f89b46ac2f510e121abb5764c70e54b00b6ee"
+source = "git+https://github.com/taichi-ishitani/rustdv?branch=gpi-backend-trait#92e9af643b25b4442e9755426720f09b2813f321"
 dependencies = [
  "linkme",
  "rustdv-gpi",
@@ -121,7 +121,7 @@ dependencies = [
 [[package]]
 name = "rustdv-gpi"
 version = "0.3.0"
-source = "git+https://github.com/taichi-ishitani/rustdv?branch=gpi-backend-trait#f19f89b46ac2f510e121abb5764c70e54b00b6ee"
+source = "git+https://github.com/taichi-ishitani/rustdv?branch=gpi-backend-trait#92e9af643b25b4442e9755426720f09b2813f321"
 dependencies = [
  "num-bigint",
  "rustdv-gpi-sys",
@@ -130,12 +130,12 @@ dependencies = [
 [[package]]
 name = "rustdv-gpi-sys"
 version = "0.3.0"
-source = "git+https://github.com/taichi-ishitani/rustdv?branch=gpi-backend-trait#f19f89b46ac2f510e121abb5764c70e54b00b6ee"
+source = "git+https://github.com/taichi-ishitani/rustdv?branch=gpi-backend-trait#92e9af643b25b4442e9755426720f09b2813f321"
 
 [[package]]
 name = "rustdv-macros"
 version = "0.3.0"
-source = "git+https://github.com/taichi-ishitani/rustdv?branch=gpi-backend-trait#f19f89b46ac2f510e121abb5764c70e54b00b6ee"
+source = "git+https://github.com/taichi-ishitani/rustdv?branch=gpi-backend-trait#92e9af643b25b4442e9755426720f09b2813f321"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -145,7 +145,7 @@ dependencies = [
 [[package]]
 name = "rustdv-methodology"
 version = "0.3.0"
-source = "git+https://github.com/taichi-ishitani/rustdv?branch=gpi-backend-trait#f19f89b46ac2f510e121abb5764c70e54b00b6ee"
+source = "git+https://github.com/taichi-ishitani/rustdv?branch=gpi-backend-trait#92e9af643b25b4442e9755426720f09b2813f321"
 dependencies = [
  "linkme",
  "rustdv-sim",
@@ -154,7 +154,7 @@ dependencies = [
 [[package]]
 name = "rustdv-runner"
 version = "0.3.0"
-source = "git+https://github.com/taichi-ishitani/rustdv?branch=gpi-backend-trait#f19f89b46ac2f510e121abb5764c70e54b00b6ee"
+source = "git+https://github.com/taichi-ishitani/rustdv?branch=gpi-backend-trait#92e9af643b25b4442e9755426720f09b2813f321"
 dependencies = [
  "linkme",
  "rustdv-gpi",
@@ -165,7 +165,7 @@ dependencies = [
 [[package]]
 name = "rustdv-sim"
 version = "0.3.0"
-source = "git+https://github.com/taichi-ishitani/rustdv?branch=gpi-backend-trait#f19f89b46ac2f510e121abb5764c70e54b00b6ee"
+source = "git+https://github.com/taichi-ishitani/rustdv?branch=gpi-backend-trait#92e9af643b25b4442e9755426720f09b2813f321"
 dependencies = [
  "libloading",
  "rustdv-gpi",

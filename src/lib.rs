@@ -486,7 +486,9 @@ fn signal(s: &mut State, index: usize) -> &mut Signal {
 }
 
 fn node_handle(index: usize) -> ObjHandle {
-    ObjHandle::from_raw(index + 1)
+    // SAFETY: node IDs are this backend's own; it resolves them by index and
+    // checks them against the current design (`valid_node`).
+    unsafe { ObjHandle::from_raw(index + 1) }
 }
 
 fn node_index(h: ObjHandle) -> Option<usize> {
