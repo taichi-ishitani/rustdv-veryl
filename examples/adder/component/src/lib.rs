@@ -5,7 +5,7 @@
 //! `adder_test` instantiates it next to the adder.
 
 use rustdv::prelude::*;
-use rustdv_veryl::Host;
+use rustdv_veryl::{Host, posedge_within, tick};
 use veryl_component::{
     BuildCtx, ClockPort, Component, InputPort, OutputPort, Result, SimCtx, VerylInterface,
     component_impl, veryl_component_export,
@@ -70,32 +70,53 @@ impl RustdvTb {
 
 veryl_component_export!("rustdv_tb" => RustdvTb);
 
+/// The `tb` modport of `adder_if`, as values.
+#[rustdv_veryl::modport]
+struct AdderBus {
+    #[output]
+    start: bool,
+    #[output]
+    a: u8,
+    #[output]
+    b: u8,
+    #[input]
+    done: bool,
+    #[input]
+    result: u16,
+}
+
+impl AdderBus {
+    fn request(&mut self, x: u8, y: u8) {
+        self.start = true;
+        self.a = x;
+        self.b = y;
+    }
+}
+
+/// The testbench's view of the design, synchronized with `clk`.
+#[rustdv_veryl::clocking]
+struct AdderCb {
+    #[modport]
+    bus: AdderBus,
+}
+
 /// Sends each pair through the bus on rising edges and checks the sums.
 #[rustdv::test]
 async fn add(ctx: RustdvCtx) -> std::result::Result<(), TestError> {
     let dut = ctx.dut();
-    let clk = dut.signal("clk")?;
-    let bus = dut.hierarchy("bus")?;
-    let (start, a, b) = (bus.signal("start")?, bus.signal("a")?, bus.signal("b")?);
-    let (done, result) = (bus.signal("done")?, bus.signal("result")?);
+    let mut cb = AdderCb::new(&dut, dut.signal("clk")?, AdderCbPaths::default())?;
 
-    for (x, y) in [(1u64, 2u64), (100, 27), (200, 100), (255, 255)] {
-        clk.rising_edge().await;
-        a.set_u64(x);
-        b.set_u64(y);
-        start.set_u64(1);
-        clk.rising_edge().await;
-        start.set_u64(0);
-        loop {
-            clk.rising_edge().await;
-            if done.is_high() {
-                break;
-            }
-        }
-        let sum = result.get_u64()?;
+    for (x, y) in [(1u8, 2u8), (100, 27), (200, 100), (255, 255)] {
+        tick!(cb);
+        cb.bus.request(x, y);
+        tick!(cb);
+        cb.bus.start = false;
+        posedge_within!(cb.bus.done, 8)?;
+        let sum = u64::from(cb.bus.result);
+        let expected = u64::from(x) + u64::from(y);
         ctx.info(&format!("{x} + {y} = {sum}"));
-        if sum != x + y {
-            return Err(format!("{x} + {y}: expected {}, got {sum}", x + y).into());
+        if sum != expected {
+            return Err(format!("{x} + {y}: expected {expected}, got {sum}").into());
         }
     }
     Ok(())

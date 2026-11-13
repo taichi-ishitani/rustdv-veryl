@@ -1,28 +1,6 @@
-[package]
-name = "rustdv-veryl"
-version = "0.1.0"
-edition = "2024"
-description = "Run rustdv testbenches on Veryl's built-in simulator, hosted inside a Veryl verification component."
-license = "MIT"
-repository = "https://github.com/taichi-ishitani/rustdv-veryl"
-readme = "README.md"
-keywords = ["verification", "testbench", "veryl", "rtl", "dv"]
-categories = ["development-tools::testing", "simulation"]
-# Not publishable yet: depends on the rustdv backend interface, which no
-# released rustdv provides.
-publish = false
-
-[dependencies]
-# The rustdv backend interface is not released yet (rustdv/rustdv#25).
-# Without the `vpi` feature: the testbench cdylib must not reference the
-# `vpi_*` entry points, which no Veryl host provides.
-rustdv = { git = "https://github.com/taichi-ishitani/rustdv", branch = "gpi-backend-trait", default-features = false }
-rustdv-gpi = { git = "https://github.com/taichi-ishitani/rustdv", branch = "gpi-backend-trait", default-features = false }
-rustdv-gpi-sys = { git = "https://github.com/taichi-ishitani/rustdv", branch = "gpi-backend-trait" }
-smallvec = "1.15"
-veryl-component = "0.1.2"
-
 # Standalone for now: kept out of both the rustdv and the Veryl workspace.
-# The examples are Veryl projects with their own component packages.
 [workspace]
+members = ["crates/*"]
+# The examples are Veryl projects with their own component packages.
 exclude = ["examples"]
+resolver = "3"

@@ -137,6 +137,14 @@
 //!
 //! The backend state is per thread: one [`Host`] per Veryl test.
 
+pub mod clocking;
+
+pub use clocking::{ClockingTimeout, SignalValue};
+pub use rustdv_veryl_macros::{
+    changed, changed_within, clocking, edge, edge_within, modport, negedge, negedge_within,
+    posedge, posedge_within,
+};
+
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::ops::{Deref, DerefMut};
@@ -163,7 +171,11 @@ enum Port {
 }
 
 enum Item {
-    Signal { name: String, port: Port, width: u32 },
+    Signal {
+        name: String,
+        port: Port,
+        width: u32,
+    },
     Scope(Scope),
 }
 

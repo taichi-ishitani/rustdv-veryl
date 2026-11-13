@@ -245,41 +245,79 @@ an output port can be driven.
 
 ## Step 5: the rustdv testbench
 
-The test itself is plain rustdv. It looks the signals up under the `dut`
-scope, drives a request on a rising edge and samples the response on later
-rising edges:
+The testbench reads and writes the bus through a clocking block, like a
+SystemVerilog `clocking cb @(posedge clk)`: signals are plain struct fields,
+synchronized with the clock edges.
+
+First the `tb` modport is declared again, this time as values for rustdv.
+`#[modport]` gives each member its direction, and functions of the interface
+become methods:
 
 ```rust
+#[rustdv_veryl::modport]
+struct AdderBus {
+    #[output] start: bool,
+    #[output] a: u8,
+    #[output] b: u8,
+    #[input]  done: bool,
+    #[input]  result: u16,
+}
+
+impl AdderBus {
+    fn request(&mut self, x: u8, y: u8) {
+        self.start = true;
+        self.a = x;
+        self.b = y;
+    }
+}
+```
+
+`#[clocking]` makes a struct the clocking block. Its `#[modport]` field binds
+the members under the scope of the same name, `dut.bus`:
+
+```rust
+#[rustdv_veryl::clocking]
+struct AdderCb {
+    #[modport]
+    bus: AdderBus,
+}
+```
+
+The test binds the clocking block to the `dut` scope and its clock, then
+drives a request and waits for the response:
+
+```rust
+use rustdv_veryl::{posedge_within, tick};
+
 #[rustdv::test]
 async fn add(ctx: RustdvCtx) -> std::result::Result<(), TestError> {
     let dut = ctx.dut();
-    let clk = dut.signal("clk")?;
-    let bus = dut.hierarchy("bus")?;
-    let (start, a, b) = (bus.signal("start")?, bus.signal("a")?, bus.signal("b")?);
-    let (done, result) = (bus.signal("done")?, bus.signal("result")?);
+    let mut cb = AdderCb::new(&dut, dut.signal("clk")?, AdderCbPaths::default())?;
 
-    for (x, y) in [(1u64, 2u64), (100, 27), (200, 100), (255, 255)] {
-        clk.rising_edge().await;
-        a.set_u64(x);
-        b.set_u64(y);
-        start.set_u64(1);
-        clk.rising_edge().await;
-        start.set_u64(0);
-        loop {
-            clk.rising_edge().await;
-            if done.is_high() {
-                break;
-            }
-        }
-        let sum = result.get_u64()?;
+    for (x, y) in [(1u8, 2u8), (100, 27), (200, 100), (255, 255)] {
+        tick!(cb);
+        cb.bus.request(x, y);
+        tick!(cb);
+        cb.bus.start = false;
+        posedge_within!(cb.bus.done, 8)?;
+        let sum = u64::from(cb.bus.result);
+        let expected = u64::from(x) + u64::from(y);
         ctx.info(&format!("{x} + {y} = {sum}"));
-        if sum != x + y {
-            return Err(format!("{x} + {y}: expected {}, got {sum}", x + y).into());
+        if sum != expected {
+            return Err(format!("{x} + {y}: expected {expected}, got {sum}").into());
         }
     }
     Ok(())
 }
 ```
+
+`tick!(cb)`, the counterpart of SystemVerilog's `@(cb)`, drives the outputs
+assigned since the last tick, waits for the rising edge of the clock and
+samples every input. It stands for `cb.tick().await`, so it is used in async
+code like any rustdv wait. Between ticks the fields do not change on their
+own: an input holds the value sampled at the last edge, an output the value
+last assigned. `posedge_within!(cb.bus.done, 8)` ticks until `done` rises,
+like `@(posedge cb.done)`, and fails the test if it does not within 8 edges.
 
 `veryl test` shows the rustdv log as the output of the component:
 
@@ -309,9 +347,75 @@ clock edges. The rustdv simulator callbacks are emulated from them:
 - value changes of signals other than clocks are seen once per edge
 - timers fire at the first edge at or after their deadline
 
-Write testbenches that sample and drive on rising edges, as `add` does; they
-then see the same cycles as on an event-driven simulator. One time step is
-1 us.
+A clocking block samples and drives on rising edges, so a testbench written
+with one sees the same cycles as on an event-driven simulator. One time step
+is 1 us.
+
+## Clocking blocks
+
+A `#[clocking]` struct mixes `#[modport]` fields with single signals:
+
+```rust
+#[rustdv_veryl::clocking]
+struct Cb {
+    #[modport] bus: AdderBus,             // members under `bus`
+    #[output]  irq_ack: bool,             // the signal `irq_ack`
+    #[input]   state: u8,                 // the signal `state`
+}
+```
+
+`new(scope, clock, paths)` binds each field under `scope` by its name. The
+generated `<Name>Paths` struct overrides that path, field by field; the rest
+keep their names:
+
+```rust
+let cb = Cb::new(
+    &dut,
+    dut.signal("clk")?,
+    CbPaths {
+        bus: Some("harness.bus"),
+        state: Some("u_core.state"),
+        ..Default::default()
+    },
+)?;
+```
+
+`new` fails if a signal is missing or wider than its field's type. Fields can
+be `bool`, `u8` to `u128`, `BigUint` or `LogicArray`. As SystemVerilog does
+for two-state types, all but `LogicArray` read X and Z bits as 0; use
+`LogicArray` for a signal whose X/Z matters.
+
+Besides `tick!`, a clocking block waits on its fields. Each wait ticks until
+an expression over the clocking block matches:
+
+| Wait | Returns at the edge where | SystemVerilog |
+|---|---|---|
+| `posedge!(cb.bus.done)` | the `bool` goes from false to true | `@(posedge cb.done)` |
+| `negedge!(cb.bus.done)` | the `bool` goes from true to false | `@(negedge cb.done)` |
+| `edge!(cb.bus.done)` | the `bool` changes either way | `@(edge cb.done)` |
+| `changed!(cb.state)` | the value changes (any `PartialEq`; `(cb.a, cb.b)` for several) | `@(cb.state)` |
+| `cb.wait(\|c\| c.state == 3).await` | the condition holds; at once if it already does | `wait (cb.state == 3)` |
+
+The expression starts from the clocking block variable and may be any
+expression over it (`posedge!(cb.cnt % 4 == 0)`). The macros stand for the
+methods of the same name, which take a closure instead
+(`cb.posedge(|c| c.bus.done).await`).
+
+These waits never time out. The `_within` forms — `posedge_within!`,
+`negedge_within!`, `edge_within!` and `changed_within!` — take a number of
+edges after the expression and return `Result<(), ClockingTimeout>`, which `?`
+turns into a test failure naming the expression:
+
+```rust
+posedge_within!(cb.bus.done, 8)?; // "`cb.bus.done` not seen within 8 cycles"
+```
+
+The methods take the limit as `.within(n)`, and `.label(...)` to name the
+wait in the message: `cb.posedge(|c| c.bus.done).within(8).label("done").await?`.
+
+The clocking blocks use only rustdv's handles, which stay available for
+anything else: `dut.signal("x")?` gives a `LogicHandle` to read and write
+directly.
 
 ## Limitations
 

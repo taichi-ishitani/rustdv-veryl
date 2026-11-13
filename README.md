@@ -14,7 +14,8 @@ by `veryl test`.
 
 The [guide](docs/guide.md) walks through the example step by step: the
 interface and the design, the test module, the component crate, the wiring
-and the rustdv testbench, then timing and limitations.
+and the rustdv testbench written with a clocking block, then timing, clocking
+blocks in detail and limitations.
 
 ## Example
 

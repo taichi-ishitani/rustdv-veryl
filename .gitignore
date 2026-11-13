@@ -2,3 +2,4 @@
 /examples/*/target
 /examples/*/.build
 /examples/*/dependencies
+/examples/*/component/target
