@@ -1,5 +1,8 @@
-//! Procedural macros of `rustdv-veryl`: `#[modport]` and `#[clocking]`.
-//! See `rustdv_veryl::clocking` for how they are used.
+//! Procedural macros of `rustdv-veryl`: `#[modport]` and `#[clocking]`
+//! (see `rustdv_veryl::clocking`), and the constrained random macros (see
+//! `rustdv_veryl::random`).
+
+mod random;
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -573,4 +576,52 @@ pub fn edge_within(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn changed_within(input: TokenStream) -> TokenStream {
     expand_wait_within("changed", input)
+}
+
+fn expand(r: syn::Result<TokenStream2>) -> TokenStream {
+    r.unwrap_or_else(syn::Error::into_compile_error).into()
+}
+
+/// Makes a struct randomizable: `#[rand]` fields are random variables,
+/// the others are state. See `rustdv_veryl::random`.
+#[proc_macro_attribute]
+pub fn randomize(attr: TokenStream, item: TokenStream) -> TokenStream {
+    expand(random::randomize(attr.into(), item.into()))
+}
+
+/// The constraint blocks of a random struct (`#[constraints] impl T`), or
+/// of a constraint set (`#[constraints(for T)]`).
+#[proc_macro_attribute]
+pub fn constraints(attr: TokenStream, item: TokenStream) -> TokenStream {
+    expand(random::constraints(attr.into(), item.into()))
+}
+
+/// A function written in constraint syntax, expanded where it is called.
+#[proc_macro_attribute]
+pub fn constraint_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
+    expand(random::constraint_fn(attr.into(), item.into()))
+}
+
+/// Lets a fieldless enum be a random variable: it takes only its variants.
+#[proc_macro_derive(RandEnum)]
+pub fn rand_enum(item: TokenStream) -> TokenStream {
+    expand(random::rand_enum(item.into()))
+}
+
+/// `randomize_with!(obj, { constraints })`: SV `randomize() with`.
+#[proc_macro]
+pub fn randomize_with(input: TokenStream) -> TokenStream {
+    expand(random::randomize_with(input.into()))
+}
+
+/// `std_randomize!([x, y], { constraints })`: randomizes local variables.
+#[proc_macro]
+pub fn std_randomize(input: TokenStream) -> TokenStream {
+    expand(random::std_randomize(input.into()))
+}
+
+/// `randcase! { 3 => a(), 1 => b() }`: runs one branch, picked by weight.
+#[proc_macro]
+pub fn randcase(input: TokenStream) -> TokenStream {
+    expand(random::randcase(input.into()))
 }

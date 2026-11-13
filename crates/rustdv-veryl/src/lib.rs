@@ -62,6 +62,7 @@
 //! The backend state is per thread: one [`Host`] per Veryl test.
 
 pub mod clocking;
+pub mod random;
 
 pub use clocking::{ClockingTimeout, SignalValue};
 pub use rustdv_veryl_macros::{

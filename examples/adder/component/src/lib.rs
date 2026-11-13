@@ -5,6 +5,7 @@
 //! clock and the `tb` modport of the adder's bus.
 
 use rustdv::prelude::*;
+use rustdv_veryl::random::{self, constraints, randomize};
 use rustdv_veryl::{posedge_within, tick};
 
 rustdv_veryl::export!("rustdv_tb");
@@ -39,13 +40,36 @@ struct AdderCb {
     bus: AdderBus,
 }
 
-/// Sends each pair through the bus on rising edges and checks the sums.
+/// The operands of one addition, randomized.
+#[randomize]
+#[derive(Default)]
+struct Operands {
+    #[rand]
+    a: u8,
+    #[rand]
+    b: u8,
+}
+
+#[constraints]
+impl Operands {
+    /// `a` in the upper half, `b` in the lower half (up to 128).
+    fn carry() {
+        a >= 128;
+        b <= 128;
+    }
+}
+
+/// Sends random pairs through the bus on rising edges and checks the sums.
 #[rustdv::test]
 async fn add(ctx: RustdvCtx) -> std::result::Result<(), TestError> {
+    random::set_seed(ctx.seed());
     let dut = ctx.dut();
     let mut cb = AdderCb::new(&dut, dut.signal("clk")?, AdderCbPaths::default())?;
 
-    for (x, y) in [(1u8, 2u8), (100, 27), (200, 100), (255, 255)] {
+    let mut ops = Operands::default();
+    for _ in 0..20 {
+        ops.randomize()?;
+        let (x, y) = (ops.a, ops.b);
         tick!(cb);
         cb.bus.request(x, y);
         tick!(cb);

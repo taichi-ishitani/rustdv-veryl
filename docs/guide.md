@@ -242,18 +242,48 @@ struct AdderCb {
 }
 ```
 
+The operands are made by constrained randomization
+([`rustdv_veryl::random`](random.md)), like a SystemVerilog class with `rand`
+members and a `constraint` block. The constraint keeps `a` in the upper half
+and `b` in the lower half (up to 128):
+
+```rust
+use rustdv_veryl::random::{self, constraints, randomize};
+
+#[randomize]
+#[derive(Default)]
+struct Operands {
+    #[rand]
+    a: u8,
+    #[rand]
+    b: u8,
+}
+
+#[constraints]
+impl Operands {
+    fn carry() {
+        a >= 128;
+        b <= 128;
+    }
+}
+```
+
 The test binds the clocking block to the `dut` scope and its clock, then
-drives a request and waits for the response:
+for each random pair drives a request and waits for the response:
 
 ```rust
 use rustdv_veryl::{posedge_within, tick};
 
 #[rustdv::test]
 async fn add(ctx: RustdvCtx) -> std::result::Result<(), TestError> {
+    random::set_seed(ctx.seed());
     let dut = ctx.dut();
     let mut cb = AdderCb::new(&dut, dut.signal("clk")?, AdderCbPaths::default())?;
 
-    for (x, y) in [(1u8, 2u8), (100, 27), (200, 100), (255, 255)] {
+    let mut ops = Operands::default();
+    for _ in 0..20 {
+        ops.randomize()?;
+        let (x, y) = (ops.a, ops.b);
         tick!(cb);
         cb.bus.request(x, y);
         tick!(cb);
@@ -278,16 +308,21 @@ own: an input holds the value sampled at the last edge, an output the value
 last assigned. `posedge_within!(cb.bus.done, 8)` ticks until `done` rises,
 like `@(posedge cb.done)`, and fails the test if it does not within 8 edges.
 
+`random::set_seed(ctx.seed())` seeds the randomization with the test's seed,
+which rustdv takes from `RUSTDV_RANDOM_SEED` (or the time when it is unset):
+`RUSTDV_RANDOM_SEED=1 veryl test` reproduces a run.
+
 `veryl test` shows the rustdv log as the output of the component:
 
 ```text
-[tb] cycle 3:    4000.00ns INFO     [add]: 1 + 2 = 3
-[tb] cycle 6:   10000.00ns INFO     [add]: 100 + 27 = 127
-[tb] cycle 9:   16000.00ns INFO     [add]: 200 + 100 = 300
-[tb] cycle 12:   22000.00ns INFO     [add]: 255 + 255 = 510
-[tb] cycle 12:   22000.00ns INFO     add PASSED
+[tb] cycle 3:    4000.00ns INFO     [add]: 188 + 114 = 302
+[tb] cycle 6:   10000.00ns INFO     [add]: 209 + 120 = 329
+[tb] cycle 9:   16000.00ns INFO     [add]: 207 + 38 = 245
+[tb] cycle 12:   22000.00ns INFO     [add]: 182 + 127 = 309
 ...
-[tb] cycle 12: REGRESSION: PASS
+[tb] cycle 60:  118000.00ns INFO     add PASSED
+...
+[tb] cycle 60: REGRESSION: PASS
 [INFO ]    Succeeded test (adder_test)
 ```
 

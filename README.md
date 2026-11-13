@@ -22,6 +22,10 @@ interface and the design, the test module, the component crate, the
 testbench component and the rustdv testbench written with a clocking block,
 then timing, clocking blocks in detail and limitations.
 
+[Constrained random](docs/random.md) describes `rustdv_veryl::random`:
+SystemVerilog's `rand`, `constraint` and `randomize()` on Rust structs,
+solved with a SAT solver.
+
 ## Example
 
 [`examples/adder`](examples/adder) verifies a small adder through an
