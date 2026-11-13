@@ -1,119 +1,40 @@
 //! Run rustdv testbenches on Veryl's built-in simulator.
 //!
-//! The testbench crate is a Veryl verification component: it declares the
-//! ports and interface ports it connects to the design, registers them with a
-//! [`Host`] in `on_build`, and forwards its hooks to the host. The host
-//! installs a rustdv [`Backend`] serving those ports. A component method
-//! calling [`Host::start`] hands control to rustdv, like UVM's `run_test`:
-//! the test module calls it, and the host runs the regression of every
-//! `#[rustdv::test]` linked into the crate. When the regression ends the
-//! Veryl test finishes, and a failing regression fails it.
-//!
-//! The component crate depends on `veryl-component`, `rustdv` (without its
-//! default `vpi` feature) and this crate directly: the derives of both
-//! frameworks refer to their crates by name.
-//!
-//! The example `examples/adder` of this crate's repository verifies an adder
-//! through the `tb` modport of its interface `adder_if`. Its component
-//! declares the modport, registers it with the host and forwards the hooks:
+//! A component crate holding `#[rustdv::test]`s invokes [`export!`] once,
+//! which makes it a Veryl verification component (`$comp::<name>`). The test
+//! module instantiates it without ports and hands it the design through its
+//! methods — clocks, resets, signals and modports, passed by reference — then
+//! calls `start`, which hands control to rustdv like UVM's `run_test`. The
+//! regression of every `#[rustdv::test]` in the crate then runs; when it ends
+//! the Veryl test finishes, and a failing regression fails it.
 //!
 //! ```ignore
-//! use rustdv_veryl::Host;
-//! use veryl_component::{
-//!     BuildCtx, ClockPort, Component, InputPort, OutputPort, Result, SimCtx, VerylInterface,
-//!     component_impl, veryl_component_export,
-//! };
+//! rustdv_veryl::export!("rustdv_tb");
 //!
-//! /// The `tb` modport of `adder_if`.
-//! #[derive(VerylInterface)]
-//! #[interface(path = "adder_if", modport = "tb")]
-//! struct AdderTb {
-//!     start: OutputPort,
-//!     a: OutputPort,
-//!     b: OutputPort,
-//!     done: InputPort,
-//!     result: InputPort,
-//! }
-//!
-//! /// Hosts the rustdv tests: the DUT scope `dut` holds `clk` and the bus
-//! /// members under `bus`.
-//! #[derive(Component)]
-//! #[component(kind = clocked)]
-//! pub struct RustdvTb {
-//!     clk: ClockPort,
-//!     #[interface]
-//!     bus: AdderTb,
-//!     host: Host,
-//! }
-//!
-//! #[component_impl]
-//! impl RustdvTb {
-//!     fn on_build(&mut self, _ctx: &mut BuildCtx) -> Result<()> {
-//!         self.host.clock("clk", self.clk);
-//!         self.host
-//!             .scope("bus")
-//!             .output("start", self.bus.start)
-//!             .output("a", self.bus.a)
-//!             .output("b", self.bus.b)
-//!             .input("done", self.bus.done)
-//!             .input("result", self.bus.result);
-//!         Ok(())
-//!     }
-//!
-//!     fn on_init(&mut self, ctx: &mut SimCtx) -> Result<()> {
-//!         self.host.init(ctx);
-//!         Ok(())
-//!     }
-//!
-//!     fn on_clock(&mut self, ctx: &mut SimCtx) -> Result<()> {
-//!         self.host.clock_edge(ctx);
-//!         Ok(())
-//!     }
-//!
-//!     fn on_finish(&mut self, ctx: &mut SimCtx) -> Result<()> {
-//!         self.host.finish(ctx);
-//!         Ok(())
-//!     }
-//!
-//!     /// Hands control to rustdv: runs the rustdv tests of this crate.
-//!     fn start(&mut self, ctx: &mut SimCtx) -> Result<()> {
-//!         self.host.start(ctx)
-//!     }
-//! }
-//!
-//! veryl_component_export!("rustdv_tb" => RustdvTb);
+//! #[rustdv::test]
+//! async fn add(ctx: RustdvCtx) -> Result<(), TestError> { /* ... */ }
 //! ```
-//!
-//! The test module connects the component next to the design and starts
-//! rustdv from an `initial` block:
 //!
 //! ```veryl
-//! #[test(adder_test)]
-//! module adder_test {
-//!     inst clk: $tb::clock_gen;
-//!     inst bus: adder_if;
-//!     inst dut: adder (
-//!         i_clk: clk,
-//!         bus       ,
-//!     );
-//!     inst tb: $comp::rustdv_tb (
-//!         clk        ,
-//!         bus: bus.tb,
-//!     );
+//! inst tb: $comp::rustdv_tb;
 //!
-//!     // tb.start() hands control to rustdv. The rustdv regression finishes the
-//!     // test when it is done; clk.next bounds the run if it never does.
-//!     initial {
-//!         tb.start();
-//!         clk.next(1000);
-//!         $finish();
-//!     }
+//! initial {
+//!     tb.set_clock("clk", clk);
+//!     tb.set_interface("bus", bus.tb);
+//!     tb.start();
+//!     clk.next(1000);
+//!     $finish();
 //! }
 //! ```
 //!
-//! rustdv then sees the design as one scope (`dut` by default) holding the
-//! registered signals, with a nested scope per [`Scope::scope`]:
-//! `ctx.dut().hierarchy("bus")?.signal("start")?`.
+//! rustdv sees the design as one scope, `dut`, holding what was registered:
+//! `dut.clk`, `dut.bus.start`, ... A dotted name (`"core.bus"`) nests scopes.
+//! [Clocking blocks](mod@clocking) read and write those signals as struct
+//! fields.
+//!
+//! The component crate depends on `veryl-component`, `rustdv` (without its
+//! default `vpi` feature) and this crate directly: the generated code and the
+//! macros of both frameworks refer to their crates by name.
 //!
 //! # Timing
 //!
@@ -127,11 +48,14 @@
 //! - value changes of signals other than clocks are detected by comparing
 //!   their values at each hook, so they are seen once per hook
 //! - timers fire at the first hook at or after their deadline
-//! - a clock port is modeled as a toggling signal: each `on_clock` raises it,
-//!   preceded by a falling edge half-way since the previous rise
+//! - a clock is modeled as a toggling signal: each `on_clock` it fires raises
+//!   it, preceded by a falling edge half-way since the previous rise
+//! - during a `rst.assert()` window the component gets no `on_clock` (only
+//!   `on_reset`, for a registered reset), so rustdv's clocks do not tick until
+//!   the reset is released
 //!
-//! A testbench therefore samples and drives on rising edges. Hierarchical
-//! references into the design beyond the registered ports are not supported.
+//! A testbench therefore samples and drives on rising edges, as a clocking
+//! block does. rustdv sees only what the test module registered.
 //!
 //! One time step is 1 us, the timescale of Veryl's waveform dumps.
 //!
@@ -147,16 +71,162 @@ pub use rustdv_veryl_macros::{
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
-use std::ops::{Deref, DerefMut};
 
 use rustdv_gpi::ValueError;
 use rustdv_gpi::backend::{self, Backend, CbData, CbToken, ObjHandle, ObjKind, Reason};
 use rustdv_gpi_sys as sys;
 use smallvec::SmallVec;
-use veryl_component::{ClockPort, InputPort, OutputPort, ResetPort, SimCtx, Value};
+use veryl_component::{
+    ClockPort, InputPort, MemberPort, ModportRef, OutputPort, ResetPort, SimCtx, Value,
+};
 
 /// Simulation time precision: one Veryl time unit is 1 us.
 const TIME_PRECISION: i32 = -6;
+
+// ===========================================================================
+// The testbench component
+// ===========================================================================
+
+/// Exports the rustdv testbench component as `$comp::<name>`. Invoke it once
+/// in the component crate, next to the `#[rustdv::test]`s it runs:
+///
+/// ```ignore
+/// rustdv_veryl::export!("rustdv_tb");
+/// ```
+///
+/// The component has no ports. The test module hands it the design through
+/// its methods, then starts rustdv:
+///
+/// ```veryl
+/// inst tb: $comp::rustdv_tb;
+///
+/// initial {
+///     tb.set_clock("clk", clk);
+///     tb.set_interface("bus", bus.tb);
+///     tb.start();
+///     clk.next(1000);
+///     $finish();
+/// }
+/// ```
+///
+/// - `set_clock(name, clk)`, `set_reset(name, rst)`: a clock or a reset
+/// - `set_input(name, x)`, `set_output(name, y)`: a signal rustdv reads or
+///   drives
+/// - `set_interface(name, bus.modport)`: the members of a modport, under the
+///   scope `name`
+/// - `start()`: hands control to rustdv, like UVM's `run_test`
+///
+/// rustdv sees each one as `dut.<name>`; a dotted name (`"core.bus"`) nests
+/// it in scopes. Everything is registered before `start`. The crate depends
+/// on `veryl-component` directly, which the generated code names.
+#[macro_export]
+macro_rules! export {
+    ($name:literal) => {
+        /// The rustdv testbench: runs the crate's `#[rustdv::test]`s on the
+        /// clocks, resets, signals and interfaces the test module passes it.
+        #[derive(::veryl_component::Component)]
+        #[component(kind = clocked)]
+        pub struct Rustdv {
+            host: $crate::Host,
+        }
+
+        #[::veryl_component::component_impl]
+        impl Rustdv {
+            fn on_init(
+                &mut self,
+                ctx: &mut ::veryl_component::SimCtx,
+            ) -> ::veryl_component::Result<()> {
+                self.host.init(ctx);
+                ::core::result::Result::Ok(())
+            }
+
+            fn on_clock(
+                &mut self,
+                ctx: &mut ::veryl_component::SimCtx,
+            ) -> ::veryl_component::Result<()> {
+                self.host.clock_edge(ctx);
+                ::core::result::Result::Ok(())
+            }
+
+            fn on_reset(
+                &mut self,
+                ctx: &mut ::veryl_component::SimCtx,
+            ) -> ::veryl_component::Result<()> {
+                self.host.reset_edge(ctx);
+                ::core::result::Result::Ok(())
+            }
+
+            fn on_finish(
+                &mut self,
+                ctx: &mut ::veryl_component::SimCtx,
+            ) -> ::veryl_component::Result<()> {
+                self.host.finish(ctx);
+                ::core::result::Result::Ok(())
+            }
+
+            /// Registers a clock as `dut.<name>`; rustdv runs on its edges.
+            fn set_clock(
+                &mut self,
+                _ctx: &mut ::veryl_component::SimCtx,
+                name: ::std::string::String,
+                clk: ::veryl_component::ClockPort,
+            ) -> ::veryl_component::Result<()> {
+                self.host.add_clock(&name, clk)
+            }
+
+            /// Registers a reset as `dut.<name>`.
+            fn set_reset(
+                &mut self,
+                _ctx: &mut ::veryl_component::SimCtx,
+                name: ::std::string::String,
+                rst: ::veryl_component::ResetPort,
+            ) -> ::veryl_component::Result<()> {
+                self.host.add_reset(&name, rst)
+            }
+
+            /// Registers a signal rustdv reads as `dut.<name>`.
+            fn set_input(
+                &mut self,
+                _ctx: &mut ::veryl_component::SimCtx,
+                name: ::std::string::String,
+                sig: ::veryl_component::InputPort,
+            ) -> ::veryl_component::Result<()> {
+                self.host.add_input(&name, sig)
+            }
+
+            /// Registers a signal rustdv drives as `dut.<name>`.
+            fn set_output(
+                &mut self,
+                _ctx: &mut ::veryl_component::SimCtx,
+                name: ::std::string::String,
+                sig: ::veryl_component::OutputPort,
+            ) -> ::veryl_component::Result<()> {
+                self.host.add_output(&name, sig)
+            }
+
+            /// Registers the members of a modport under the scope
+            /// `dut.<name>`.
+            fn set_interface(
+                &mut self,
+                _ctx: &mut ::veryl_component::SimCtx,
+                name: ::std::string::String,
+                bus: ::veryl_component::ModportRef,
+            ) -> ::veryl_component::Result<()> {
+                self.host.add_interface(&name, &bus)
+            }
+
+            /// Hands control to rustdv: runs the crate's `#[rustdv::test]`s.
+            fn start(
+                &mut self,
+                ctx: &mut ::veryl_component::SimCtx,
+            ) -> ::veryl_component::Result<()> {
+                self.host.start(ctx)
+            }
+        }
+
+        ::veryl_component::veryl_component_export!($name => Rustdv);
+    };
+}
 
 // ===========================================================================
 // Host
@@ -181,7 +251,7 @@ enum Item {
 
 /// A scope of the design as rustdv sees it: named signals backed by the
 /// component's ports, and nested scopes.
-pub struct Scope {
+struct Scope {
     name: String,
     items: Vec<Item>,
 }
@@ -194,98 +264,125 @@ impl Scope {
         }
     }
 
-    fn signal(&mut self, name: impl Into<String>, port: Port, width: u32) -> &mut Self {
-        self.items.push(Item::Signal {
-            name: name.into(),
-            port,
-            width,
+    fn has(&self, name: &str) -> bool {
+        self.items.iter().any(|item| match item {
+            Item::Signal { name: n, .. } => n == name,
+            Item::Scope(scope) => scope.name == name,
+        })
+    }
+
+    /// The nested scope `name`, created if missing; `None` if a signal
+    /// already has the name.
+    fn scope_mut(&mut self, name: &str) -> Option<&mut Scope> {
+        let pos = self.items.iter().position(|item| match item {
+            Item::Signal { name: n, .. } => n == name,
+            Item::Scope(scope) => scope.name == name,
         });
-        self
-    }
-
-    /// Expose an input port as the signal `name`. rustdv can read it but not
-    /// write it.
-    pub fn input(&mut self, name: impl Into<String>, port: InputPort) -> &mut Self {
-        self.signal(name, Port::Input(port), port.width())
-    }
-
-    /// Expose an output port as the signal `name`.
-    pub fn output(&mut self, name: impl Into<String>, port: OutputPort) -> &mut Self {
-        self.signal(name, Port::Output(port), port.width())
-    }
-
-    /// Expose a clock port as the signal `name`.
-    pub fn clock(&mut self, name: impl Into<String>, port: ClockPort) -> &mut Self {
-        self.signal(name, Port::Clock(port), 1)
-    }
-
-    /// Expose a reset port as the signal `name`.
-    pub fn reset(&mut self, name: impl Into<String>, port: ResetPort) -> &mut Self {
-        self.signal(name, Port::Reset(port), 1)
-    }
-
-    /// Add the nested scope `name`, e.g. for the members of an interface
-    /// port, and return it.
-    pub fn scope(&mut self, name: impl Into<String>) -> &mut Scope {
-        self.items.push(Item::Scope(Scope::new(name)));
-        let Some(Item::Scope(scope)) = self.items.last_mut() else {
-            unreachable!("just pushed")
+        let pos = match pos {
+            Some(pos) => pos,
+            None => {
+                self.items.push(Item::Scope(Scope::new(name)));
+                self.items.len() - 1
+            }
         };
-        scope
+        match &mut self.items[pos] {
+            Item::Scope(scope) => Some(scope),
+            Item::Signal { .. } => None,
+        }
     }
 }
 
-/// Hosts the rustdv regression inside a Veryl component: register the
-/// component's ports in `on_build` (it derefs to the top [`Scope`]), forward
-/// each hook to the matching method, and call [`Host::start`] from a
-/// component method to run rustdv.
+/// Hosts the rustdv regression inside a Veryl component. The component
+/// [`export!`] generates owns one: the test module registers clocks, resets,
+/// signals and interfaces through its methods, then calls `start`.
 pub struct Host {
     top: Scope,
 }
 
 impl Default for Host {
     fn default() -> Self {
-        Host::new("dut")
-    }
-}
-
-impl Deref for Host {
-    type Target = Scope;
-    fn deref(&self) -> &Scope {
-        &self.top
-    }
-}
-
-impl DerefMut for Host {
-    fn deref_mut(&mut self) -> &mut Scope {
-        &mut self.top
+        Host {
+            top: Scope::new("dut"),
+        }
     }
 }
 
 impl Host {
-    /// A host whose top scope is named `top`.
-    pub fn new(top: impl Into<String>) -> Self {
-        Host {
-            top: Scope::new(top),
+    /// Registers a clock as the signal `name` under the `dut` scope; a dotted
+    /// name (`"core.clk"`) nests it in scopes. Only before [`Host::start`].
+    pub fn add_clock(&mut self, name: &str, port: ClockPort) -> veryl_component::Result<()> {
+        self.add(name, Port::Clock(port), 1)
+    }
+
+    /// Registers a reset as the signal `name`; see [`Host::add_clock`].
+    pub fn add_reset(&mut self, name: &str, port: ResetPort) -> veryl_component::Result<()> {
+        self.add(name, Port::Reset(port), 1)
+    }
+
+    /// Registers a signal rustdv reads as `name`; see [`Host::add_clock`].
+    pub fn add_input(&mut self, name: &str, port: InputPort) -> veryl_component::Result<()> {
+        self.add(name, Port::Input(port), port.width())
+    }
+
+    /// Registers a signal rustdv drives as `name`; see [`Host::add_clock`].
+    pub fn add_output(&mut self, name: &str, port: OutputPort) -> veryl_component::Result<()> {
+        self.add(name, Port::Output(port), port.width())
+    }
+
+    /// Registers the members of a modport as signals of the scope `name`,
+    /// each under its member name; see [`Host::add_clock`].
+    pub fn add_interface(&mut self, name: &str, bus: &ModportRef) -> veryl_component::Result<()> {
+        for member in bus.members() {
+            let path = format!("{name}.{}", member.name);
+            match member.port {
+                MemberPort::Input(port) => self.add_input(&path, port)?,
+                MemberPort::Output(port) => self.add_output(&path, port)?,
+            }
         }
+        Ok(())
     }
 
-    /// Forward `on_init`: install the backend on this thread. rustdv does not
-    /// run until [`Host::start`].
-    pub fn init(&self, _ctx: &mut SimCtx) {
-        self.setup();
+    fn add(&mut self, name: &str, port: Port, width: u32) -> veryl_component::Result<()> {
+        if with_state(|s| s.started).unwrap_or(false) {
+            veryl_component::bail!("cannot register `{name}` after the rustdv regression started");
+        }
+        let mut parts: Vec<&str> = name.split('.').collect();
+        let Some(leaf) = parts.pop().filter(|leaf| !leaf.is_empty()) else {
+            veryl_component::bail!("invalid signal name `{name}`");
+        };
+        let mut scope = &mut self.top;
+        for part in parts {
+            if part.is_empty() {
+                veryl_component::bail!("invalid signal name `{name}`");
+            }
+            scope = match scope.scope_mut(part) {
+                Some(scope) => scope,
+                None => veryl_component::bail!("`{part}` of `{name}` is already a signal"),
+            };
+        }
+        if scope.has(leaf) {
+            veryl_component::bail!("`{name}` is already registered");
+        }
+        scope.items.push(Item::Signal {
+            name: leaf.to_string(),
+            port,
+            width,
+        });
+        Ok(())
     }
 
-    /// Hand control to rustdv: start the regression of every
-    /// `#[rustdv::test]` linked into the crate. Call it from a component
-    /// method that the test module calls, like UVM's `run_test`, after the
-    /// testbench is set up. Fails if the regression already started.
+    /// Forward `on_init`. Nothing runs before [`Host::start`].
+    pub fn init(&self, _ctx: &mut SimCtx) {}
+
+    /// Hand control to rustdv, like UVM's `run_test`: binds the registered
+    /// signals and starts the regression of every `#[rustdv::test]` linked
+    /// into the crate. Fails if the regression already started.
     pub fn start(&self, ctx: &mut SimCtx) -> veryl_component::Result<()> {
-        // A method may be called before `on_init`.
-        self.setup();
-        if with_state(|s| std::mem::replace(&mut s.started, true)).unwrap_or(false) {
+        if with_state(|s| s.started).unwrap_or(false) {
             veryl_component::bail!("the rustdv regression has already started");
         }
+        self.setup();
+        with_state(|s| s.started = true);
         let now = ctx.time();
         let _hook = HookGuard::enter(ctx);
         advance(now);
@@ -295,11 +392,8 @@ impl Host {
         Ok(())
     }
 
-    /// Create the backend state and install the backend, once per test.
+    /// Create the backend state and install the backend.
     fn setup(&self) {
-        if with_state(|_| ()).is_some() {
-            return;
-        }
         let mut nodes = Vec::new();
         flatten(&self.top, None, &mut nodes);
         STATE.with(|s| {
@@ -316,8 +410,11 @@ impl Host {
         backend::install(&VerylBackend);
     }
 
-    /// Forward `on_clock`.
+    /// Forward `on_clock`. Ignored before [`Host::start`].
     pub fn clock_edge(&self, ctx: &mut SimCtx) {
+        if with_state(|_| ()).is_none() {
+            return;
+        }
         let now = ctx.time();
         let fired: Vec<usize> = with_state(|s| {
             s.nodes
@@ -355,8 +452,11 @@ impl Host {
         fire(|w| matches!(w, Wait::AtEndOfSimTime));
     }
 
-    /// Forward `on_reset`.
+    /// Forward `on_reset`. Ignored before [`Host::start`].
     pub fn reset_edge(&self, ctx: &mut SimCtx) {
+        if with_state(|_| ()).is_none() {
+            return;
+        }
         let now = ctx.time();
         let _hook = HookGuard::enter(ctx);
         advance(now);
@@ -368,7 +468,7 @@ impl Host {
     /// the test if rustdv was never started.
     pub fn finish(&self, ctx: &mut SimCtx) {
         if !with_state(|s| s.started).unwrap_or(false) {
-            ctx.fail("the rustdv regression was not started: call `Host::start`");
+            ctx.fail("the rustdv regression was not started: call `start`");
         } else {
             let _hook = HookGuard::enter(ctx);
             fire(|w| matches!(w, Wait::EndOfSimulation));

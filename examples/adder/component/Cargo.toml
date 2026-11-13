@@ -12,7 +12,8 @@ crate-type = ["cdylib"]
 rustdv = { git = "https://github.com/taichi-ishitani/rustdv", branch = "gpi-backend-trait", default-features = false }
 rustdv-veryl = { path = "../../../crates/rustdv-veryl" }
 # The component derives refer to `::veryl_component`.
-veryl-component = "0.1.2"
+# Method reference arguments are not released yet (veryl-lang/veryl#3701).
+veryl-component = { git = "https://github.com/taichi-ishitani/veryl", branch = "feat/component-method-ref-args" }
 
 # Standalone package.
 [workspace]

@@ -252,8 +252,7 @@ checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 [[package]]
 name = "veryl-component"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "279af70554c0e2b04cf7439f4ed8cca244aadde09b5fb6f93a7dca718aa6b46d"
+source = "git+https://github.com/taichi-ishitani/veryl?branch=feat%2Fcomponent-method-ref-args#7e84f7b7bfe003e12d2749fb719d4ce4c09fdf61"
 dependencies = [
  "anyhow",
  "smallvec",
@@ -264,8 +263,7 @@ dependencies = [
 [[package]]
 name = "veryl-component-macros"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad325c979206e33c28ecb135df6596b2f97d42f38e6f7fa4c254fa6ccb248a68"
+source = "git+https://github.com/taichi-ishitani/veryl?branch=feat%2Fcomponent-method-ref-args#7e84f7b7bfe003e12d2749fb719d4ce4c09fdf61"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -275,8 +273,7 @@ dependencies = [
 [[package]]
 name = "veryl-component-sys"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51fd96eba08b4bad6f83eca30c213e6fc29f83d02be4d67d8604fd95be757ff8"
+source = "git+https://github.com/taichi-ishitani/veryl?branch=feat%2Fcomponent-method-ref-args#7e84f7b7bfe003e12d2749fb719d4ce4c09fdf61"
 
 [[package]]
 name = "windows-link"

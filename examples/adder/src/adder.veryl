@@ -45,14 +45,14 @@ module adder_test {
         i_clk: clk,
         bus       ,
     );
-    inst tb: $comp::rustdv_tb (
-        clk        ,
-        bus: bus.tb,
-    );
+    inst tb : $comp::rustdv_tb;
 
+    // The testbench gets the clock and the bus through its methods, and
     // tb.start() hands control to rustdv. The rustdv regression finishes the
     // test when it is done; clk.next bounds the run if it never does.
     initial {
+        tb.set_clock("clk", clk);
+        tb.set_interface("bus", bus.tb);
         tb.start();
         clk.next(1000);
         $finish();

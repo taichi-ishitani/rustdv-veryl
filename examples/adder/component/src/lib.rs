@@ -1,74 +1,13 @@
 //! rustdv tests of the adder, run by Veryl's built-in simulator.
 //!
-//! The `rustdv_tb` component connects to the `tb` modport of the adder's
-//! bus and hosts every `#[rustdv::test]` of this crate; the Veryl test
-//! `adder_test` instantiates it next to the adder.
+//! `export!` makes this crate the `$comp::rustdv_tb` component, which runs
+//! every `#[rustdv::test]` here; the Veryl test `adder_test` passes it the
+//! clock and the `tb` modport of the adder's bus.
 
 use rustdv::prelude::*;
-use rustdv_veryl::{Host, posedge_within, tick};
-use veryl_component::{
-    BuildCtx, ClockPort, Component, InputPort, OutputPort, Result, SimCtx, VerylInterface,
-    component_impl, veryl_component_export,
-};
+use rustdv_veryl::{posedge_within, tick};
 
-/// The `tb` modport of `adder_if`.
-#[derive(VerylInterface)]
-#[interface(path = "adder_if", modport = "tb")]
-struct AdderTb {
-    start: OutputPort,
-    a: OutputPort,
-    b: OutputPort,
-    done: InputPort,
-    result: InputPort,
-}
-
-/// Hosts the rustdv tests: the DUT scope `dut` holds `clk` and the bus
-/// members under `bus`.
-#[derive(Component)]
-#[component(kind = clocked)]
-pub struct RustdvTb {
-    clk: ClockPort,
-    #[interface]
-    bus: AdderTb,
-    host: Host,
-}
-
-#[component_impl]
-impl RustdvTb {
-    fn on_build(&mut self, _ctx: &mut BuildCtx) -> Result<()> {
-        self.host.clock("clk", self.clk);
-        self.host
-            .scope("bus")
-            .output("start", self.bus.start)
-            .output("a", self.bus.a)
-            .output("b", self.bus.b)
-            .input("done", self.bus.done)
-            .input("result", self.bus.result);
-        Ok(())
-    }
-
-    fn on_init(&mut self, ctx: &mut SimCtx) -> Result<()> {
-        self.host.init(ctx);
-        Ok(())
-    }
-
-    fn on_clock(&mut self, ctx: &mut SimCtx) -> Result<()> {
-        self.host.clock_edge(ctx);
-        Ok(())
-    }
-
-    fn on_finish(&mut self, ctx: &mut SimCtx) -> Result<()> {
-        self.host.finish(ctx);
-        Ok(())
-    }
-
-    /// Hands control to rustdv: runs the rustdv tests of this crate.
-    fn start(&mut self, ctx: &mut SimCtx) -> Result<()> {
-        self.host.start(ctx)
-    }
-}
-
-veryl_component_export!("rustdv_tb" => RustdvTb);
+rustdv_veryl::export!("rustdv_tb");
 
 /// The `tb` modport of `adder_if`, as values.
 #[rustdv_veryl::modport]

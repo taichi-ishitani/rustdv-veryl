@@ -10,23 +10,25 @@ step shows what the example does and what to write in your own project.
 examples/adder/
 |-- Veryl.toml          the Veryl project; registers the component
 |-- src/adder.veryl     the interface, the design and the #[test] module
-`-- component/          the component crate: wiring + rustdv testbench
+`-- component/          the component crate: the rustdv testbench
     |-- Cargo.toml
     `-- src/lib.rs
 ```
 
-The `#[test]` module instantiates the design and a component side by side,
-both connected to one interface instance. The component hosts the rustdv
-testbench:
+The `#[test]` module instantiates the design and the testbench component
+side by side, and passes the component the clock and the `tb` modport of
+the interface instance the design is connected to:
 
 ```text
 #[test] module adder_test
- |-- inst bus: adder_if                             interface instance
- |-- inst dut: adder (clk, bus)                     design, on modport dut
- `-- inst tb : $comp::rustdv_tb (clk, bus: bus.tb)  component, on modport tb
-                 `-- component crate (cdylib)
-                      |-- rustdv_veryl::Host        ports -> rustdv signals
-                      `-- #[rustdv::test] add       the testbench
+ |-- inst bus: adder_if                      interface instance
+ |-- inst dut: adder (clk, bus)              design, on modport dut
+ `-- inst tb : $comp::rustdv_tb              component, without ports
+       |-- tb.set_clock("clk", clk)          the clock
+       |-- tb.set_interface("bus", bus.tb)   modport tb
+       `-- component crate (cdylib)
+            |-- rustdv_veryl::export!        the component
+            `-- #[rustdv::test] add          the testbench
 ```
 
 Run it with:
@@ -86,8 +88,9 @@ module adder (
 
 ## Step 2: the test module
 
-The `#[test]` module connects the design and the component to the same
-interface instance, the component on the `tb` modport:
+The `#[test]` module connects the design to the interface instance, and
+hands the testbench component the clock and the `tb` modport through its
+methods:
 
 ```veryl
 #[test(adder_test)]
@@ -98,12 +101,11 @@ module adder_test {
         i_clk: clk,
         bus       ,
     );
-    inst tb: $comp::rustdv_tb (
-        clk        ,
-        bus: bus.tb,
-    );
+    inst tb : $comp::rustdv_tb;
 
     initial {
+        tb.set_clock("clk", clk);
+        tb.set_interface("bus", bus.tb);
         tb.start();
         clk.next(1000);
         $finish();
@@ -111,11 +113,28 @@ module adder_test {
 }
 ```
 
+The component has no ports; what it works on is what the test module passes
+it, so each test module can pass something else. Each method takes the name
+rustdv sees and a reference:
+
+| Method | Passes | rustdv sees |
+|---|---|---|
+| `tb.set_clock(name, clk)` | a clock; rustdv runs on its edges | `dut.<name>` |
+| `tb.set_reset(name, rst)` | a reset | `dut.<name>` |
+| `tb.set_input(name, x)` | a signal rustdv reads | `dut.<name>` |
+| `tb.set_output(name, y)` | a signal rustdv drives | `dut.<name>` |
+| `tb.set_interface(name, bus.tb)` | a modport of any interface | `dut.<name>.<member>` |
+
+A dotted name nests scopes: `tb.set_interface("core.bus", ...)` makes
+`dut.core.bus.<member>`, so a test can use the same paths as on a simulator
+where the design hierarchy is visible. A name is registered once, and all
+of them before `start`.
+
 `tb.start()` hands control to rustdv, like UVM's `run_test`: the rustdv
 tests start running from here. The test module decides when, e.g. after a
 reset sequence. The rustdv regression finishes the test when it is done;
 `clk.next(1000)` keeps the clock running and bounds the run if it never
-does.
+does. A test that never calls `start` fails when it ends.
 
 ## Step 3: the component crate
 
@@ -135,19 +154,26 @@ registers it. Then add the dependencies to its `Cargo.toml`:
 crate-type = ["cdylib"]
 
 [dependencies]
-veryl-component = "0.1.2"
+veryl-component = { git = "https://github.com/taichi-ishitani/veryl", branch = "feat/component-method-ref-args" }
 rustdv = { git = "https://github.com/taichi-ishitani/rustdv", branch = "gpi-backend-trait", default-features = false }
 rustdv-veryl = { git = "https://github.com/taichi-ishitani/rustdv-veryl" }
 ```
 
-rustdv-veryl is not on crates.io yet. It needs the rustdv backend interface,
-proposed in [rustdv/rustdv#25](https://github.com/rustdv/rustdv/pull/25) and
-not in any released rustdv; until it is, take rustdv from that branch. Use
-the same rustdv source as rustdv-veryl does, or the two see different rustdv
-crates. Take rustdv-veryl from its repository. The example takes
+None of them is released with what rustdv-veryl needs yet:
+
+- passing references to component methods, proposed in
+  [veryl-lang/veryl#3701](https://github.com/veryl-lang/veryl/pull/3701):
+  take `veryl-component` from that branch, and run `veryl test` with a Veryl
+  built from it
+- the rustdv backend interface, proposed in
+  [rustdv/rustdv#25](https://github.com/rustdv/rustdv/pull/25): take rustdv
+  from that branch
+
+Use the same `veryl-component` and rustdv sources as rustdv-veryl does, or
+the crates see two different copies of them. The example takes
 `rustdv-veryl` by path, to build against the local sources.
 
-If cargo fails to fetch the git repository, for example because git rewrites
+If cargo fails to fetch a git repository, for example because git rewrites
 GitHub URLs to SSH, let it use the git command line in
 `~/.cargo/config.toml`:
 
@@ -159,89 +185,23 @@ git-fetch-with-cli = true
 - `rustdv` is a direct dependency because the testbench uses it, and its
   macros refer to the `rustdv` crate by name. Disable its default
   features, which are not used with Veryl.
-- `veryl-component` is direct for the same reason: its derives refer to the
-  `veryl_component` crate by name.
+- `veryl-component` is direct for the same reason: the component
+  `rustdv_veryl::export!` generates refers to the `veryl_component` crate by
+  name.
 
-## Step 4: wiring the component
+## Step 4: the testbench component
 
-`component/src/lib.rs` first declares the `tb` modport as Rust ports:
-
-```rust
-#[derive(VerylInterface)]
-#[interface(path = "adder_if", modport = "tb")]
-struct AdderTb {
-    start: OutputPort,
-    a: OutputPort,
-    b: OutputPort,
-    done: InputPort,
-    result: InputPort,
-}
-```
-
-The component embeds it as the interface port `bus` — the name the test
-module connects (`bus: bus.tb`) — next to the clock and a `Host`:
+`component/src/lib.rs` makes the crate the component with one line:
 
 ```rust
-#[derive(Component)]
-#[component(kind = clocked)]
-pub struct RustdvTb {
-    clk: ClockPort,
-    #[interface]
-    bus: AdderTb,
-    host: Host,
-}
+rustdv_veryl::export!("rustdv_tb");
 ```
 
-In `on_build` it registers its ports with the host. The host exposes them to
-rustdv as one DUT scope, `dut`, with a nested scope per `scope(...)`:
-`dut.clk`, `dut.bus.start`, `dut.bus.done`, ... The other hooks are
-forwarded to the host as they are, and the `start` method called by the test
-module starts rustdv:
-
-```rust
-#[component_impl]
-impl RustdvTb {
-    fn on_build(&mut self, _ctx: &mut BuildCtx) -> Result<()> {
-        self.host.clock("clk", self.clk);
-        self.host
-            .scope("bus")
-            .output("start", self.bus.start)
-            .output("a", self.bus.a)
-            .output("b", self.bus.b)
-            .input("done", self.bus.done)
-            .input("result", self.bus.result);
-        Ok(())
-    }
-
-    fn on_init(&mut self, ctx: &mut SimCtx) -> Result<()> {
-        self.host.init(ctx);
-        Ok(())
-    }
-
-    fn on_clock(&mut self, ctx: &mut SimCtx) -> Result<()> {
-        self.host.clock_edge(ctx);
-        Ok(())
-    }
-
-    fn on_finish(&mut self, ctx: &mut SimCtx) -> Result<()> {
-        self.host.finish(ctx);
-        Ok(())
-    }
-
-    fn start(&mut self, ctx: &mut SimCtx) -> Result<()> {
-        self.host.start(ctx)
-    }
-}
-
-veryl_component_export!("rustdv_tb" => RustdvTb);
-```
-
-From `start` the host runs every `#[rustdv::test]` linked into the crate.
+The name is the one the test module instantiates (`$comp::rustdv_tb`). The
+generated component has the methods of [Step 2](#step-2-the-test-module),
+and from `start` it runs every `#[rustdv::test]` linked into the crate.
 When the regression ends the Veryl test finishes, and a failing regression
-fails it. A test that never calls `start` fails when it ends.
-
-Only registered signals are visible to rustdv: an input port can be read,
-an output port can be driven.
+fails it.
 
 ## Step 5: the rustdv testbench
 
@@ -249,9 +209,8 @@ The testbench reads and writes the bus through a clocking block, like a
 SystemVerilog `clocking cb @(posedge clk)`: signals are plain struct fields,
 synchronized with the clock edges.
 
-First the `tb` modport is declared again, this time as values for rustdv.
-`#[modport]` gives each member its direction, and functions of the interface
-become methods:
+The test declares the `tb` modport as values for rustdv. `#[modport]` gives
+each member its direction, and functions of the interface become methods:
 
 ```rust
 #[rustdv_veryl::modport]
@@ -346,6 +305,9 @@ clock edges. The rustdv simulator callbacks are emulated from them:
   (NBA semantics), so the design samples them at the next edge
 - value changes of signals other than clocks are seen once per edge
 - timers fire at the first edge at or after their deadline
+- while `rst.assert()` holds a reset, the component gets no `on_clock` (only
+  `on_reset`, for a reset passed with `set_reset`), so rustdv's clocks do not
+  tick until it is released; start rustdv after the reset sequence
 
 A clocking block samples and drives on rising edges, so a testbench written
 with one sees the same cycles as on an event-driven simulator. One time step
@@ -419,6 +381,8 @@ directly.
 
 ## Limitations
 
-- No hierarchical access into the design beyond the registered ports.
+- rustdv sees only what the test module registers through the methods.
 - Falling edges are emulated, not real: driving on them is not supported.
-- One host per Veryl test.
+- One `rustdv_tb` per Veryl test.
+- Clocks and resets inside a child instance cannot be passed yet; pass them
+  through the test module.

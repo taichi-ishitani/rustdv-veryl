@@ -1,71 +1,21 @@
-//! Clocking blocks on a component driven by `MockSim`, with the design
+//! The testbench component `export!` generates, driven by `MockSim`: the
+//! design is passed to it through its methods, as a test module does, and is
 //! modeled here: `q` and `bus.ack` return `d` and `bus.req` one clock later,
 //! and `cnt` counts the clocks.
 //!
 //! The `#[rustdv::test]`s of this binary form one rustdv regression; each
-//! checks one behavior and fails with what it saw.
+//! checks one behavior of the clocking blocks and fails with what it saw.
 
 use rustdv::prelude::*;
 use rustdv_veryl::{
-    ClockingTimeout, Host, changed, changed_within, clocking, edge, modport, negedge, posedge,
+    ClockingTimeout, changed, changed_within, clocking, edge, modport, negedge, posedge,
     posedge_within, tick,
 };
 use smallvec::smallvec;
+use veryl_component::Value;
 use veryl_component::testing::MockSim;
-use veryl_component::{
-    BuildCtx, ClockPort, Component, InputPort, OutputPort, Result, SimCtx, Value, component_impl,
-};
 
-#[derive(Component)]
-#[component(kind = clocked)]
-struct Tb {
-    clk: ClockPort,
-    d: OutputPort,
-    q: InputPort,
-    cnt: InputPort,
-    flag: InputPort,
-    wide: InputPort,
-    req: OutputPort,
-    ack: InputPort,
-    host: Host,
-}
-
-#[component_impl]
-impl Tb {
-    fn on_build(&mut self, _ctx: &mut BuildCtx) -> Result<()> {
-        self.host
-            .clock("clk", self.clk)
-            .output("d", self.d)
-            .input("q", self.q)
-            .input("cnt", self.cnt)
-            .input("flag", self.flag)
-            .input("wide", self.wide);
-        self.host
-            .scope("bus")
-            .output("req", self.req)
-            .input("ack", self.ack);
-        Ok(())
-    }
-
-    fn on_init(&mut self, ctx: &mut SimCtx) -> Result<()> {
-        self.host.init(ctx);
-        Ok(())
-    }
-
-    fn on_clock(&mut self, ctx: &mut SimCtx) -> Result<()> {
-        self.host.clock_edge(ctx);
-        Ok(())
-    }
-
-    fn on_finish(&mut self, ctx: &mut SimCtx) -> Result<()> {
-        self.host.finish(ctx);
-        Ok(())
-    }
-
-    fn start(&mut self, ctx: &mut SimCtx) -> Result<()> {
-        self.host.start(ctx)
-    }
-}
+rustdv_veryl::export!("rustdv_tb");
 
 #[modport]
 struct Bus {
@@ -257,25 +207,46 @@ async fn x_and_z_read_as_zero(ctx: RustdvCtx) -> std::result::Result<(), TestErr
     })
 }
 
+/// Calls a registration method of the testbench with the name and the
+/// reference.
+fn register(sim: &mut MockSim, tb: &mut Rustdv, method: &str, name: &str, reference: Value) {
+    sim.call(tb, method, &[Value::Str(name.into()), reference])
+        .unwrap_or_else(|e| panic!("{method}({name}): {e:#}"));
+}
+
 /// Runs the regression on `MockSim`, modeling the design each clock.
 #[test]
 fn clocking_blocks() {
-    let mut sim = MockSim::new()
-        .four_state(true)
-        .clock_port("clk")
-        .output("d", 8)
-        .input("q", 8)
-        .input("cnt", 8)
-        .input("flag", 1)
-        .input("wide", 9)
-        .output("req", 8)
-        .input("ack", 8);
+    let mut sim = MockSim::new().four_state(true);
+    let mut tb = sim.build::<Rustdv>().unwrap();
+    sim.init(&mut tb).unwrap();
+
+    // What the test module passes, as `tb.set_clock("clk", clk)` and so on.
+    let clk = sim.clock_ref("clk");
+    register(&mut sim, &mut tb, "set_clock", "clk", clk);
+    for (name, output, width) in [
+        ("d", true, 8),
+        ("q", false, 8),
+        ("cnt", false, 8),
+        ("flag", false, 1),
+        ("wide", false, 9),
+    ] {
+        let method = if output { "set_output" } else { "set_input" };
+        let sig = sim.signal_ref(name, output, &[width]);
+        register(&mut sim, &mut tb, method, name, sig);
+    }
+    let bus = sim.modport_ref(
+        "bus",
+        "pair_if",
+        "tb",
+        &[("req", true, &[8]), ("ack", false, &[8])],
+    );
+    register(&mut sim, &mut tb, "set_interface", "bus", bus);
+
     sim.set_fired_clock("clk");
-    let mut tb = sim.build::<Tb>().unwrap();
     // X on `flag`; 0x1ff on `wide` with bit 0 Z.
     sim.set("flag", Value::from_bits(smallvec![0], smallvec![1], 1));
     sim.set("wide", Value::from_bits(smallvec![0x1ff], smallvec![1], 9));
-    sim.init(&mut tb).unwrap();
     sim.call(&mut tb, "start", &[]).unwrap();
 
     let mut cnt: u64 = 0;
@@ -287,18 +258,48 @@ fn clocking_blocks() {
         sim.clock(&mut tb).unwrap();
         // The design: registered loopback and a free-running counter.
         let d = sim.get("d").as_u64().unwrap();
-        let req = sim.get("req").as_u64().unwrap();
+        let req = sim.get("bus.req").as_u64().unwrap();
         cnt = (cnt + 1) % 256;
         sim.set("q", d);
-        sim.set("ack", req);
+        sim.set("bus.ack", req);
         sim.set("cnt", Value::from_u64(cnt, 8));
     }
     sim.finish(&mut tb).unwrap();
 
     let logs = sim.logs().join("\n");
     assert!(
-        !sim.failed() && logs.contains("REGRESSION: PASS"),
+        !sim.failed() && logs.contains("found 6 test(s)") && logs.contains("REGRESSION: PASS"),
         "failures: {:?}\n{logs}",
         sim.failures()
+    );
+}
+
+#[test]
+fn registration_is_checked() {
+    let mut sim = MockSim::new();
+    let mut tb = sim.build::<Rustdv>().unwrap();
+    sim.init(&mut tb).unwrap();
+    let a = sim.signal_ref("a", false, &[1]);
+    register(&mut sim, &mut tb, "set_input", "core.a", a);
+    // A name is registered once, and a signal is no scope.
+    let again = sim.signal_ref("a2", false, &[1]);
+    let err = sim
+        .call(&mut tb, "set_input", &[Value::Str("core.a".into()), again])
+        .unwrap_err();
+    assert!(
+        format!("{err:#}").contains("`core.a` is already registered"),
+        "{err:#}"
+    );
+    let under = sim.signal_ref("b", false, &[1]);
+    let err = sim
+        .call(
+            &mut tb,
+            "set_input",
+            &[Value::Str("core.a.b".into()), under],
+        )
+        .unwrap_err();
+    assert!(
+        format!("{err:#}").contains("is already a signal"),
+        "{err:#}"
     );
 }
